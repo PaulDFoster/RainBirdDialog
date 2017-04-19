@@ -49,85 +49,80 @@ namespace RainbirdDialog
             if (KMID == null) throw new Exception("No Knowledge Map ID set for this conversation");
 
             // Run /Start with Rainbird and store the Session ID returned
-            context.UserData.SetValue<string>("RainbirdSessionId", Start(KMID));
+            //context.UserData.SetValue<string>("RainbirdSessionId", Start(KMID));
 
-            await context.PostAsync(RainBirdPost(context, OpeningQuery, RainBirdPostType.Query));
+            //await context.PostAsync(RainBirdPost(context, OpeningQuery, RainBirdPostType.Query));
 
             context.Wait(MessageReceivedAsync);
         }
 
         private async Task MessageReceivedAsync(IDialogContext context, IAwaitable<IMessageActivity> argument)
         {
-            // This should now be a response to a RainBird question
-
-            // Need to pass it back to RainBird to get the next step
-
-            // Execute the appropriate Rainbird action
-
-            // Assuming this is a query response (Not Inject and not able to start a new Query (this done by LUIS))
-            // Not testing for mandatory first question
-
-            var message = await argument;
-
-            // Constructing users response for RainBird
-
-            RainBirdResultResponse rrr = new RainBirdResultResponse();
-            RainBirdResult r = new RainBirdResult();
-            string outStr = "";
-
-            if (context.UserData.TryGetValue("RainbirdSessionId", out outStr))
+            if (RainBirdProperty("RainbirdSessionId", ref context) == "")
             {
-                r.SessionId = outStr;
+                // This is the opening RainBird engagement
+                // Start RainBird session
+                // Open query
+                // Run /Start with Rainbird and store the Session ID returned
+                context.UserData.SetValue<string>("RainbirdSessionId", Start(KMID));
+
+                await context.PostAsync(RainBirdPost(context, OpeningQuery, RainBirdPostType.Query));
             }
             else
             {
-                r.SessionId = "";
-            }
+                // This should be a response to a RainBird question
 
-            if (context.UserData.TryGetValue("RainbirdLastSubject", out outStr))
-            {
-                r.Subject = outStr;
-            }
-            else
-            {
-                r.Subject = "";
-            }
+                // Need to pass it back to RainBird to get the next step
 
-            if (!context.UserData.TryGetValue("RainbirdLastRelationship", out outStr))
-            {
-                r.RelationshipType = outStr;
-            }
-            else
-            {
-                r.RelationshipType = "";
-            }
+                // Execute the appropriate Rainbird action
 
-            if (!context.UserData.TryGetValue("RainbirdLastObject", out outStr))
-            {
-                r.ObjectMetadata = outStr;
+                // Assuming this is a query response (Not Inject and not able to start a new Query (this done by LUIS))
+                // Not testing for mandatory first question
+
+                var message = await argument;
+
+                // Constructing users response for RainBird
+
+                RainBirdResponseRequest rrr = new RainBirdResponseRequest();
+                RainBirdRequest r = new RainBirdRequest();
+                r.Subject = RainBirdProperty("RainbirdLastSubject", ref context);
+                r.Relationship = RainBirdProperty("RainbirdLastRelationship", ref context);
+                r.Object = RainBirdProperty("RainbirdLastObject", ref context);
+                r.Certainty = 100;
+                r.Answer = message.Text;
+
+                List<RainBirdRequest> answersList = new List<RainBirdRequest>();
+                answersList.Add(r);
+                rrr.Answers = answersList;
+
+                // Posting Repsonse to RainBird
+                // Posting RainBird Response to User
+                string jsonobj = JsonConvert.SerializeObject(rrr);
+                await context.PostAsync(RainBirdPost(context, jsonobj, RainBirdPostType.Response));
             }
-            else
-            {
-                r.ObjectMetadata = "";
-            }
-
-            r.Certainty = 100;
-            r.Object = message.Text;
-
-            rrr.Results.Add(r);
-
-            // Posting Repsonse to RainBird
-            // Posting RainBird Response to User
-            string jsonobj = JsonConvert.SerializeObject(rrr);
-            await context.PostAsync(RainBirdPost(context, jsonobj, RainBirdPostType.Response));
 
             context.Wait(MessageReceivedAsync);
         }
 
         public IMessageActivity RainBirdPost(IDialogContext context, string jsonObj, RainBirdPostType postType)
         {
+            // Construct the Message for the next dialog step
+            // Can be a question from RainBird, a result from RainBird or an exception from RainBird
+            var message = context.MakeMessage();
 
             // retrieve context.UserData.SetValue<string>("RainbirdSession", Start(KMID));
+            string outStr = "";
+
+            if (context.UserData.TryGetValue("RainbirdSessionId", out outStr))
+            {
+                _sessionId = outStr;
+            }
+            else
+            {
+                // If no session id should fail here not continue
+                message.Text = "Unable to contact Rainbird knowledge engine. Query closed, try again later";
+                return message;
+            }
 
             string finalUrl = "";
 
@@ -148,10 +143,6 @@ namespace RainbirdDialog
             var client = new HttpClientService<string>();
             var result = client.PostInsights(jsonObj, finalUrl, ApiKey, "", true);
 
-            // Construct the Message for the next dialog step
-            // Can be a question from RainBird, a result from RainBird or an exception from RainBird
-            var message = context.MakeMessage();
-
             if (result.Contains("question"))
             {
                 RainBirdQueryResponse  r = JsonConvert.DeserializeObject<RainBirdQueryResponse>(result);
@@ -167,11 +158,14 @@ namespace RainbirdDialog
 
                     HeroCard hc = new HeroCard();
                     hc.Text = r.Question.Prompt;
+                    List<CardAction> cardButtons = new List<CardAction>();
+
                     foreach (Concept x in r.Question.Concepts)
                     {
                         CardAction ca = new CardAction("imBack", x.Name, null, x.Value);
-                        hc.Buttons.Add(ca);
+                        cardButtons.Add(ca);
                     }
+                    hc.Buttons = cardButtons;
                     message.Attachments.Add(hc.ToAttachment());
 
                 }
@@ -208,5 +202,16 @@ namespace RainbirdDialog
 
         }
 
+        private string RainBirdProperty(string key, ref IDialogContext context)
+        {
+            string outStr = "";
+
+            if (context.UserData.TryGetValue(key, out outStr))
+            {
+                return outStr;
+            }
+
+            return "";
+        }
     }
 }

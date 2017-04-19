@@ -21,7 +21,7 @@ namespace RainbirdDialog
 
         [LuisIntent("")]
         [LuisIntent("None")]
-        public async Task None(IDialogContext context, IAwaitable<IMessageActivity> messages, LuisResult result)
+        public async Task None(IDialogContext context, LuisResult result)
         {
 
             // Cascade to QNAMaker Dialog
@@ -46,9 +46,12 @@ namespace RainbirdDialog
         // LUIS Intent match to Rainbird query
         // Forward conversation to the rainbird query dialog
         
-        //[LuisIntent("BankAccount")]
+        [LuisIntent("BankAccount")]
         public async Task BankAccount(IDialogContext context, IAwaitable<IMessageActivity> message, LuisResult result)
         {
+            // Set RainBird session id to nothing to trigger fresh query 
+            context.UserData.SetValue<string>("RainbirdSessionId", "");
+
             var rainbirdDialog = new RainbirdDialog("fe08d53b-189d-4bac-8a15-8aced896b1b5", "{\"subject\":\"the customer\",\"relationship\":\"recommended\"}");
             var messageToForward = await message;
 
