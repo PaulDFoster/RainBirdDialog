@@ -8,21 +8,23 @@ using Wrapper.Models.RainBird.Request;
 using Wrapper.Services;
 using Newtonsoft.Json;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Web.Configuration;
+
+
 
 namespace RainbirdDialog 
 {
 
     [Serializable]
-    public class RainbirdDialog : IDialog<object>
+    public class RainbirdDialog : IDialog<bool>
     {
         public enum RainBirdPostType { Query, Response, Inject};
 
         private string KMID;
         private string OpeningQuery;
         private const string BaseUrl = @"https://enterprise-api.rainbird.ai";
-        private const string MapId = @"fe08d53b-189d-4bac-8a15-8aced896b1b5";
-        private const string ApiKey = @"2f57db7c-a2d3-46d3-9526-367670081890";
-        private string ConsumerKey = @""; // Not sure where this comes from or when it is required?
+        private string ApiKey = WebConfigurationManager.AppSettings["RainBirdAPIKey"];
         private static string _sessionId;
 
         public RainbirdDialog(string _kmid, string openingQuery)
@@ -48,11 +50,6 @@ namespace RainbirdDialog
             // require the KMID
             if (KMID == null) throw new Exception("No Knowledge Map ID set for this conversation");
 
-            // Run /Start with Rainbird and store the Session ID returned
-            //context.UserData.SetValue<string>("RainbirdSessionId", Start(KMID));
-
-            //await context.PostAsync(RainBirdPost(context, OpeningQuery, RainBirdPostType.Query));
-
             context.Wait(MessageReceivedAsync);
         }
 
@@ -70,11 +67,6 @@ namespace RainbirdDialog
             }
             else
             {
-                // This should be a response to a RainBird question
-
-                // Need to pass it back to RainBird to get the next step
-
-                // Execute the appropriate Rainbird action
 
                 // Assuming this is a query response (Not Inject and not able to start a new Query (this done by LUIS))
                 // Not testing for mandatory first question
@@ -85,11 +77,29 @@ namespace RainbirdDialog
 
                 RainBirdResponseRequest rrr = new RainBirdResponseRequest();
                 RainBirdRequest r = new RainBirdRequest();
-                r.Subject = RainBirdProperty("RainbirdLastSubject", ref context);
+
+                // Question Type defines the attribute to be answered
+
+                switch (RainBirdProperty("RainbirdQuestionType", ref context))
+                {
+                        case "First Form":
+                            r.Subject = RainBirdProperty("RainbirdLastSubject", ref context);
+                            r.Object = RainBirdProperty("RainbirdLastObject", ref context);
+                            r.Answer = message.Text;
+                            break;
+                        case "Second Form Object":  
+                            r.Subject = RainBirdProperty("RainbirdLastSubject", ref context);
+                            r.Object = message.Text;
+                            break;
+                        case "Second Form Subject":
+                            r.Subject = message.Text; 
+                            r.Object = RainBirdProperty("RainbirdLastObject", ref context);
+                            break;
+                }
+
+
                 r.Relationship = RainBirdProperty("RainbirdLastRelationship", ref context);
-                r.Object = RainBirdProperty("RainbirdLastObject", ref context);
                 r.Certainty = 100;
-                r.Answer = message.Text;
 
                 List<RainBirdRequest> answersList = new List<RainBirdRequest>();
                 answersList.Add(r);
@@ -98,6 +108,9 @@ namespace RainbirdDialog
                 // Posting Repsonse to RainBird
                 // Posting RainBird Response to User
                 string jsonobj = JsonConvert.SerializeObject(rrr);
+
+                Debug.WriteLine(jsonobj);
+
                 await context.PostAsync(RainBirdPost(context, jsonobj, RainBirdPostType.Response));
             }
 
@@ -110,7 +123,6 @@ namespace RainbirdDialog
             // Can be a question from RainBird, a result from RainBird or an exception from RainBird
             var message = context.MakeMessage();
 
-            // retrieve context.UserData.SetValue<string>("RainbirdSession", Start(KMID));
             string outStr = "";
 
             if (context.UserData.TryGetValue("RainbirdSessionId", out outStr))
@@ -135,25 +147,45 @@ namespace RainbirdDialog
                     finalUrl = $"{BaseUrl}/{_sessionId}/response";
                     break;
                 case RainBirdPostType.Inject:
+                    // To do: determine a fact and inject into conversation
                     finalUrl = "";
                     break;
             }
             
 
             var client = new HttpClientService<string>();
+
+            Debug.WriteLine(finalUrl);
+
             var result = client.PostInsights(jsonObj, finalUrl, ApiKey, "", true);
 
             if (result.Contains("question"))
             {
                 RainBirdQueryResponse  r = JsonConvert.DeserializeObject<RainBirdQueryResponse>(result);
 
+                // Add Question type = First or Second. 
+                context.UserData.SetValue<string>("RainbirdQuestionType", r.Question.Type);
                 context.UserData.SetValue<string>("RainbirdLastSubject", r.Question.Subject);
                 context.UserData.SetValue<string>("RainbirdLastRelationship", r.Question.Relationship);
-                if(r.Question.Type.Contains("first"))
+                if(r.Question.Type.Contains("First"))
                     context.UserData.SetValue<bool>("RainbirdLastAnswerRequired", true);
 
-                if (r.Question.Concepts.Count>0)
+                if (r.Question.DataType == "number")
                 {
+                    //PromptDialog.Number(context, ResumeAndPromptPlatformAsync, r.Question.Prompt);
+                    message.Text = r.Question.Prompt;
+
+                }
+                else if (r.Question.DataType == "date")
+                {
+                    // No PromptDialog eqv for PromptDialog.Time
+                    // builder.Prompts.time(session, rbQuestion.prompt);
+                    message.Text = r.Question.Prompt;
+
+                }
+                else if(r.Question.Concepts != null)
+                {
+                 
                     context.UserData.SetValue<string>("RainbirdLastObject", r.Question.Concepts[0].ConceptType);
 
                     HeroCard hc = new HeroCard();
@@ -167,27 +199,30 @@ namespace RainbirdDialog
                     }
                     hc.Buttons = cardButtons;
                     message.Attachments.Add(hc.ToAttachment());
-
                 }
-                else if (r.Question.DataType == "number")
+                else
                 {
-                    //PromptDialog.Number(context, ResumeAndPromptPlatformAsync, r.Question.Prompt);
+                    // Now a string without concepts
                     message.Text = r.Question.Prompt;
-
                 }
-                else if (r.Question.DataType == "date")
-                {
-                    // No PromptDialog eqv for PromptDialog.Time
-                    // builder.Prompts.time(session, rbQuestion.prompt);
-                    message.Text = r.Question.Prompt;
 
-                }
             }
 
             if (result.Contains("result"))
             {
                 RainBirdResultResponse r = JsonConvert.DeserializeObject<RainBirdResultResponse>(result);
-                message.Text = "Results found";
+                string resultString;
+                message.Text = "";
+                foreach (RainBirdResult rr in r.Results)
+                {
+                    resultString = $"{rr.Relationship} with {rr.Certainty}% confidence: {rr.Object} \n\r {rr.ObjectMetadata.en[0].Data} \n\r\n\r[Why Analysis](http://microsoft.com): {rr.FactId}\n\r";
+                    message.Text = message.Text + resultString;
+                }
+
+                if (result == "")
+                {
+                    message.Text = "No recommendation found.";
+                }
             }
             
             if (result.Contains("exception"))
@@ -195,8 +230,6 @@ namespace RainbirdDialog
                 RainBirdExceptionResponse r = JsonConvert.DeserializeObject<RainBirdExceptionResponse>(result);
                 message.Text = r.Exception;
             }
-
-
 
             return message;
 

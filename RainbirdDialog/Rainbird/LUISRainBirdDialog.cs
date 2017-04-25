@@ -11,10 +11,8 @@ using System.Threading;
 
 namespace RainbirdDialog
 {
-    // AppID: 7a4bcbd7-4c1f-47cf-98a1-2d6e6415c271
-    // Subscription key: 0133a17b7e0a47f38f4e47c842e9ec64
-    //0133a17b7e0a47f38f4e47c842e9ec64
-    [LuisModel("7a4bcbd7-4c1f-47cf-98a1-2d6e6415c271", "0133a17b7e0a47f38f4e47c842e9ec64")] // "7a4bcbd7-4c1f-47cf-98a1-2d6e6415c271")]
+
+    [LuisModel("7a4bcbd7-4c1f-47cf-98a1-2d6e6415c271", "0133a17b7e0a47f38f4e47c842e9ec64")]
     [Serializable]
     public class LUISRainBirdDialog : LuisDialog<object>
     {
@@ -38,13 +36,13 @@ namespace RainbirdDialog
         public async Task Help(IDialogContext context, LuisResult result)
         {
 
-            await context.PostAsync("Hi! Try asking me things like 'search hotels in Seattle', 'search hotels near LAX airport' or 'show me the reviews of The Bot Resort'");
+            await context.PostAsync("Hi! Try asking me things like 'what bank account should I have'");
 
             context.Wait(this.MessageReceived);
         }
 
         // LUIS Intent match to Rainbird query
-        // Forward conversation to the rainbird query dialog
+        // Forward conversation to the RainBird query dialog
         
         [LuisIntent("BankAccount")]
         public async Task BankAccount(IDialogContext context, IAwaitable<IMessageActivity> message, LuisResult result)
@@ -59,7 +57,7 @@ namespace RainbirdDialog
 
         }
 
-        private async Task RainbirdDialogComplete(IDialogContext context, IAwaitable<object> result)
+        private async Task RainbirdDialogComplete(IDialogContext context, IAwaitable<bool> result)
         {
             var messageHandled = await result;
             if (!(bool)messageHandled)
